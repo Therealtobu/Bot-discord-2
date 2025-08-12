@@ -17,11 +17,11 @@ from datetime import datetime
 TOKEN = os.getenv("DISCORD_TOKEN") or "YOUR_TOKEN_HERE"
 
 # Role ID: role nào có quyền set/add coin cho toàn bộ thành viên role
-ROLE_COIN_ID = 123456789012345678
+ROLE_COIN_ID = 1404851048052559872
 
 # Tên đồng tiền
 COIN_NAME = "Loli Coin"
-COIN_ICON_URL = "https://i.imgur.com/3Pz2A2y.png"  # thay bằng URL icon của bạn nếu muốn
+COIN_ICON_URL = "https://discord.com/channels/919822394359701514/1397982660218847382/1404848078707753074"  # thay bằng URL icon của bạn nếu muốn
 
 # File lưu dữ liệu
 DATA_FILE = Path("data.json")
