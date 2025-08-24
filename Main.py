@@ -1,267 +1,159 @@
-# bot.py
-import discord
-from discord.ext import commands
-from discord.ui import View, Button
-import asyncio
-import json
 import os
+import discord
+from discord.ext import commands, tasks
+import asyncio
+from datetime import datetime, timedelta, timezone
+from keep_alive import keep_alive
 import random
-from pathlib import Path
-from io import BytesIO
-from datetime import datetime
+import json
+import re
 
 # -------------------------
-# Cấu hình
+# Cấu hình bot
 # -------------------------
-# token: thay trực tiếp hoặc set env DISCORD_TOKEN
-TOKEN = os.getenv("DISCORD_TOKEN") or "YOUR_TOKEN_HERE"
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+FILE_PATH = "data.json"
 
-# Role ID: role nào có quyền set/add coin cho toàn bộ thành viên role
-ROLE_COIN_ID = 1404851048052559872
+# Mute & Filter Config
+SPAM_LIMIT = 10
+TIME_WINDOW = 30  # giây
+MUTE_TIME = 900  # 15 phút
+MUTE_ROLE_ID = 1409058161947840522
+LOG_CHANNEL_ID = 1408761790845948044
 
-# Tên đồng tiền
-COIN_NAME = "Loli Coin"
-COIN_ICON_URL = "https://discord.com/channels/919822394359701514/1397982660218847382/1404848078707753074"  # thay bằng URL icon của bạn nếu muốn
+# Từ cấm
+BAD_WORDS = ["Parky", "namki", "namky", "backy", "backi", "trungkiki"]
 
-# File lưu dữ liệu
-DATA_FILE = Path("data.json")
+# Khởi tạo dữ liệu từ file cục bộ
+data = {}
+try:
+    with open(FILE_PATH, 'r') as f:
+        loaded = json.load(f)
+        data = {
+            k: {
+                'last_daily': datetime.fromisoformat(v['last_daily']) if v['last_daily'] else None,
+            } for k, v in loaded.items()
+        }
+except FileNotFoundError:
+    print(f"❌ Không tìm thấy {FILE_PATH}, tạo file mới")
+    with open(FILE_PATH, 'w') as f:
+        json.dump(data, f, indent=2)
+except Exception as e:
+    print(f"❌ Lỗi khi đọc {FILE_PATH}: {e}")
 
-# Lần đầu tặng
-DEFAULT_START = 10000
+def save_data():
+    try:
+        with open(FILE_PATH, 'w') as f:
+            content = {
+                k: {
+                    'last_daily': v['last_daily'].isoformat() if v['last_daily'] else None,
+                } for k, v in data.items()
+            }
+        json.dump(content, f, indent=2)
+        print(f"✅ Đã lưu dữ liệu vào {FILE_PATH}")
+    except Exception as e:
+        print(f"❌ Lỗi khi lưu {FILE_PATH}: {e}")
 
-# range reward khi spin
-SPIN_MIN = 10
-SPIN_MAX = 200
-
-# Spin animation settings (simple: edit message N lần)
-SPIN_ITER = 10
-SPIN_SLEEP = 0.12
-
-# -------------------------
-# Helpers: load/save data
-# -------------------------
-def ensure_datafile():
-    if not DATA_FILE.exists():
-        DATA_FILE.write_text(json.dumps({"users": {}}, ensure_ascii=False, indent=2), encoding="utf-8")
-
-def load_data():
-    ensure_datafile()
-    with DATA_FILE.open("r", encoding="utf-8") as f:
-        return json.load(f)
-
-def save_data(data):
-    with DATA_FILE.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-def get_balance_dict():
-    data = load_data()
-    return data.setdefault("users", {})
-
-def ensure_user_record(user_id: int):
-    users = get_balance_dict()
-    uid = str(user_id)
-    if uid not in users:
-        users[uid] = {"balance": DEFAULT_START, "first_claimed": True}
-        save_data({"users": users})
-        return users[uid], True
-    return users[uid], False
-
-# -------------------------
-# Bot setup
-# -------------------------
+# Intents
 intents = discord.Intents.default()
-intents.message_content = True
 intents.members = True
+intents.presences = True
+intents.message_content = True
 
-bot = commands.Bot(command_prefix="!", intents=intents)
-
-# -------------------------
-# Spin View (button)
-# -------------------------
-class SpinView(View):
-    def __init__(self, author_id: int, bet: int):
-        super().__init__(timeout=60)
-        self.author_id = author_id
-        self.bet = bet
-
-    @discord.ui.button(label="🎰 Kéo cần", style=discord.ButtonStyle.green, custom_id="spin_button")
-    async def spin_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # only allow the user who requested to press
-        if interaction.user.id != self.author_id:
-            return await interaction.response.send_message("❌ Không phải lượt của bạn.", ephemeral=True)
-
-        # disable to avoid double click
-        for child in self.children:
-            child.disabled = True
-        try:
-            await interaction.message.edit(view=self)
-        except:
-            pass
-
-        # ensure user record
-        user_obj, is_new = ensure_user_record(interaction.user.id)
-        # if new user: initial balance already given in ensure_user_record
-
-        # check balance unless user is in role with unlimited? (we're not giving unlimited here)
-        uid = str(interaction.user.id)
-        users = get_balance_dict()
-        bal = users.get(uid, {}).get("balance", 0)
-
-        if bal < self.bet:
-            return await interaction.response.send_message(f"❌ Bạn không đủ {COIN_NAME}. Số dư: `{bal}`", ephemeral=True)
-
-        # deduct bet
-        users[uid]["balance"] = bal - self.bet
-        save_data({"users": users})
-
-        # animation by editing message (simple emoji "wheel")
-        wheel_emojis = ["🍒","🍋","🍇","🍌","💎","⭐"]
-        msg = interaction.message
-        await interaction.response.defer()  # defer so we can followup edits
-
-        final_reward = 0
-        final_symbols = None
-
-        for i in range(SPIN_ITER):
-            # temporary symbols
-            temp = [random.choice(wheel_emojis) for _ in range(3)]
-            try:
-                await msg.edit(content=f"🎰 Đang quay... {' | '.join(temp)}\n(Bet `{self.bet}` {COIN_NAME})", view=self)
-            except:
-                pass
-            await asyncio.sleep(SPIN_SLEEP)
-
-        # determine final symbols and reward based on matches
-        final_symbols = tuple(random.choice(wheel_emojis) for _ in range(3))
-        # simple paytable: triple -> x10, pair -> x2, else -> 0
-        if final_symbols[0] == final_symbols[1] == final_symbols[2]:
-            multiplier = 10
-            final_reward = self.bet * multiplier
-            note = f"Triple {final_symbols[0]} ×{multiplier}"
-        elif final_symbols[0] == final_symbols[1] or final_symbols[0] == final_symbols[2] or final_symbols[1] == final_symbols[2]:
-            # find which symbol forms the pair
-            pair_sym = None
-            for s in set(final_symbols):
-                if final_symbols.count(s) == 2:
-                    pair_sym = s
-                    break
-            multiplier = 2
-            final_reward = self.bet * multiplier
-            note = f"Pair {pair_sym} ×{multiplier}"
-        else:
-            final_reward = 0
-            note = "No match"
-
-        # add reward
-        users = get_balance_dict()
-        users[uid]["balance"] = users.get(uid, {}).get("balance", 0) + final_reward
-        save_data({"users": users})
-
-        # send final result (edit)
-        result_text = (
-            f"**{interaction.user.display_name}** kết quả: `{final_symbols[0]}` | `{final_symbols[1]}` | `{final_symbols[2]}`\n"
-            f"{'🎉 Bạn thắng' if final_reward>0 else '😢 Bạn thua'} **{final_reward} {COIN_NAME}**. ({note})\n"
-            f"Số dư hiện tại: `{users[uid]['balance']}` {COIN_NAME}"
-        )
-        try:
-            await msg.edit(content=result_text, view=self)
-        except:
-            await interaction.followup.send(result_text)
-
-        self.stop()
+bot = commands.Bot(command_prefix="/", intents=intents)
 
 # -------------------------
-# Commands
+# Mute + Xóa tin nhắn + Log
+# -------------------------
+async def mute_and_log(message, reason="vi phạm", mute_time=900):
+    try:
+        mute_role = message.guild.get_role(MUTE_ROLE_ID)
+        if not mute_role:
+            print("❌ Không tìm thấy role mute!")
+            return
+
+        # Xóa tin nhắn vi phạm
+        async for msg in message.channel.history(limit=50):
+            if msg.author == message.author and (datetime.now(timezone.utc) - msg.created_at).seconds <= TIME_WINDOW:
+                try:
+                    await msg.delete()
+                    print(f"✅ Đã xóa tin nhắn của {message.author.name}")
+                except Exception as e:
+                    print(f"❌ Lỗi khi xóa tin nhắn: {e}")
+
+        # Mute thành viên
+        await message.author.add_roles(mute_role)
+        print(f"✅ Đã mute {message.author.name} trong {mute_time // 60} phút")
+
+        # Gửi log
+        log_channel = bot.get_channel(LOG_CHANNEL_ID)
+        if log_channel:
+            embed = discord.Embed(
+                title="🚨 Phát hiện vi phạm",
+                description=f"**Người vi phạm:** {message.author.mention}\n**Lý do:** {reason}\n**Thời gian mute:** {mute_time // 60} phút",
+                color=discord.Color.red()
+            )
+            embed.add_field(name="Nội dung", value=f"||{message.content or '*Không có nội dung*'}||", inline=False)
+            embed.add_field(name="Kênh", value=message.channel.mention, inline=True)
+            embed.add_field(name="Lưu ý", value="Cân nhắc khi xem", inline=False)
+            embed.timestamp = datetime.now(timezone.utc)
+            await log_channel.send(embed=embed)
+            print(f"✅ Đã gửi log vi phạm cho {message.author.name}")
+
+        # Bỏ mute sau thời gian quy định
+        await asyncio.sleep(mute_time)
+        await message.author.remove_roles(mute_role)
+        print(f"✅ Đã bỏ mute {message.author.name}")
+
+    except Exception as e:
+        print(f"❌ Lỗi mute_and_log: {e}")
+
+# -------------------------
+# On Message (Filter + Anti-Spam)
+# -------------------------
+user_messages = {}
+
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+
+    content_lower = message.content.lower()
+
+    # Kiểm tra từ cấm
+    has_bad_word = any(word.lower() in content_lower for word in BAD_WORDS)
+    if has_bad_word:
+        await mute_and_log(message, "sử dụng từ ngữ cấm", MUTE_TIME)
+        return
+
+    # Kiểm tra spam
+    now = datetime.now(timezone.utc)
+    uid = message.author.id
+    if uid not in user_messages:
+        user_messages[uid] = []
+    user_messages[uid].append(now)
+    user_messages[uid] = [t for t in user_messages[uid] if now - t < timedelta(seconds=TIME_WINDOW)]
+
+    if len(user_messages[uid]) > SPAM_LIMIT:
+        await mute_and_log(message, "spam tin nhắn", MUTE_TIME)
+        user_messages[uid] = []
+        return
+
+    await bot.process_commands(message)
+
+# -------------------------
+# On Ready
 # -------------------------
 @bot.event
 async def on_ready():
-    print(f"Bot ready: {bot.user} — {datetime.utcnow().isoformat()}")
-
-@bot.command(name="spin")
-async def cmd_spin(ctx, bet: int = 100):
-    # Ensure user record (gives default START if first time)
-    user, was_new = ensure_user_record(ctx.author.id)
-    if was_new:
-        await ctx.reply(f"🎁 Lần đầu chơi — bạn được tặng `{DEFAULT_START}` {COIN_NAME}!")
-
-    # Build initial message with button
-    msg = await ctx.send(
-        f"**{ctx.author.display_name}** chuẩn bị quay (bet `{bet}` {COIN_NAME})\n🔲 • • • • • • • •",
-        view=SpinView(ctx.author.id, bet)
-    )
-
-@bot.command(name="mycoin")
-async def cmd_mycoin(ctx):
-    users = get_balance_dict()
-    uid = str(ctx.author.id)
-    bal = users.get(uid, {}).get("balance", 0)
-    embed = discord.Embed(title=f"💎 {ctx.author.display_name} - {COIN_NAME}", description=f"Số dư: **{bal}** {COIN_NAME}", color=discord.Color.blue())
-    embed.set_thumbnail(url=COIN_ICON_URL)
-    await ctx.send(embed=embed)
-
-@bot.command(name="setcoin")
-async def cmd_setcoin(ctx, amount: int):
-    # check author has role ROLE_COIN_ID
-    role = discord.utils.get(ctx.guild.roles, id=ROLE_COIN_ID)
-    if role is None:
-        return await ctx.send("❌ Role cấu hình không tồn tại trong server này.")
-    if role not in ctx.author.roles:
-        return await ctx.send("⛔ Bạn không có quyền dùng lệnh này (cần role).")
-
-    users = get_balance_dict()
-    # set amount for all members in role
-    for member in role.members:
-        users[str(member.id)] = users.get(str(member.id), {"balance": DEFAULT_START})
-        users[str(member.id)]["balance"] = amount
-    save_data({"users": users})
-    await ctx.send(f"✅ Đã đặt **{amount} {COIN_NAME}** cho tất cả thành viên role **{role.name}**.")
-
-@bot.command(name="addcoin")
-async def cmd_addcoin(ctx, amount: int):
-    role = discord.utils.get(ctx.guild.roles, id=ROLE_COIN_ID)
-    if role is None:
-        return await ctx.send("❌ Role cấu hình không tồn tại trong server này.")
-    if role not in ctx.author.roles:
-        return await ctx.send("⛔ Bạn không có quyền dùng lệnh này (cần role).")
-
-    users = get_balance_dict()
-    for member in role.members:
-        uid = str(member.id)
-        users[uid] = users.get(uid, {"balance": DEFAULT_START})
-        users[uid]["balance"] = users[uid].get("balance", 0) + amount
-    save_data({"users": users})
-    await ctx.send(f"✅ Đã cộng **{amount} {COIN_NAME}** cho tất cả thành viên role **{role.name}**.")
-
-@bot.command(name="leaderboard")
-async def cmd_leaderboard(ctx):
-    users = get_balance_dict()
-    # convert to list and sort desc by balance
-    items = [(uid, info.get("balance", 0)) for uid, info in users.items()]
-    items.sort(key=lambda x: x[1], reverse=True)
-    top = items[:10]
-    if not top:
-        return await ctx.send("Chưa có dữ liệu Loli Coin.")
-    lines = []
-    for uid, bal in top:
-        try:
-            member = await bot.fetch_user(int(uid))
-            name = member.name
-        except:
-            name = f"<@{uid}>"
-        lines.append(f"**{name}** — `{bal}` {COIN_NAME}")
-    embed = discord.Embed(title="🏆 Top Loli Coin", description="\n".join(lines), color=discord.Color.gold())
-    await ctx.send(embed=embed)
+    print(f"✅ Bot đã đăng nhập: {bot.user}")
 
 # -------------------------
-# Ensure data file exists at start
+# Run Bot
 # -------------------------
-ensure_datafile()
+keep_alive()
 
-# -------------------------
-# Run bot
-# -------------------------
-if __name__ == "__main__":
-    if not TOKEN or TOKEN == "YOUR_TOKEN_HERE":
-        print("❌ Chưa cấu hình token. Đặt biến môi trường DISCORD_TOKEN hoặc chỉnh trực tiếp biến TOKEN trong file.")
-    else:
-        bot.run(TOKEN)
+if not DISCORD_TOKEN:
+    print("❌ Chưa đặt DISCORD_TOKEN")
+else:
+    bot.run(DISCORD_TOKEN)
