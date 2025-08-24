@@ -22,7 +22,7 @@ MUTE_ROLE_ID = 1409154399259066388
 LOG_CHANNEL_ID = 1409154239791370240
 
 # Từ cấm
-BAD_WORDS = ["Parky", "namki", "namky", "backy", "backi", "trungkiki"]
+BAD_WORDS = ["Parky", "namki", "namky", "cặc", "sex", "hentai"]
 
 # Khởi tạo dữ liệu từ file cục bộ
 data = {}
