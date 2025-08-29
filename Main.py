@@ -21,23 +21,24 @@ DISCORD_CHANNEL_ID = int(os.getenv('DISCORD_CHANNEL_ID'))
 
 # Cấu hình Chrome với stealth
 def setup_driver():
-    options = Options()
-    options.add_argument("--headless")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_experimental_option('useAutomationExtension', False)
-    options.add_argument(f"--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{random.randint(120, 130)}.0.0.0 Safari/537.36")
-    options.binary_location = "/usr/bin/google-chrome"  # Đường dẫn Chrome trên Render
     for attempt in range(3):  # Thử 3 lần
         try:
+            options = Options()  # Tạo mới options mỗi lần thử
+            options.add_argument("--headless")
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--disable-blink-features=AutomationControlled")
+            options.add_experimental_option("excludeSwitches", ["enable-automation"])
+            options.add_experimental_option('useAutomationExtension', False)
+            options.add_argument(f"--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{random.randint(120, 130)}.0.0.0 Safari/537.36")
+            options.binary_location = "/usr/bin/google-chrome"
             driver = uc.Chrome(
                 options=options,
                 browser_executable_path="/usr/bin/google-chrome",
                 version_main=random.randint(120, 130)
             )
             driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            print(f"Driver khởi tạo thành công (thử {attempt + 1})")
             return driver
         except Exception as e:
             print(f"Lỗi khởi tạo driver (thử {attempt + 1}/3): {str(e)}")
@@ -46,6 +47,7 @@ def setup_driver():
 
 driver = setup_driver()
 if not driver:
+    print("Không thể khởi tạo Chrome driver sau 3 lần thử")
     raise Exception("Không thể khởi tạo Chrome driver sau 3 lần thử")
 
 # Hàm tạo progress bar
