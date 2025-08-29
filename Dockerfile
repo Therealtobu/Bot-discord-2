@@ -1,6 +1,9 @@
 # Sử dụng base image Python 3.11 slim
 FROM python:3.11-slim
 
+# Kiểm tra phiên bản Python
+RUN python --version > /app/python_version.txt
+
 # Cài đặt các phụ thuộc cần thiết cho Chrome
 RUN apt-get update && apt-get install -y \
     wget \
