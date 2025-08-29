@@ -3,6 +3,7 @@ FROM python:3.11-slim
 
 # Kiểm tra phiên bản Python
 RUN python --version > /app/python_version.txt
+RUN echo "Python version: $(python --version)" && python -c "import audioop" || { echo "audioop module missing"; exit 1; }
 
 # Cài đặt các phụ thuộc cần thiết cho Chrome
 RUN apt-get update && apt-get install -y \
