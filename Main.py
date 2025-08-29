@@ -1,159 +1,234 @@
-import os
 import discord
-from discord.ext import commands, tasks
-import asyncio
-from datetime import datetime, timedelta, timezone
-from keep_alive import keep_alive
+from discord.ext import commands
+import undetected_chromedriver as uc
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
+from datetime import datetime
+import time
 import random
-import json
-import re
+import os  # Thêm để lấy biến môi trường
 
-# -------------------------
-# Cấu hình bot
-# -------------------------
-DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-FILE_PATH = "data.json"
-
-# Mute & Filter Config
-SPAM_LIMIT = 10
-TIME_WINDOW = 30  # giây
-MUTE_TIME = 900  # 15 phút
-MUTE_ROLE_ID = 1409154399259066388
-LOG_CHANNEL_ID = 1409154239791370240
-
-# Từ cấm
-BAD_WORDS = ["Parky", "namki", "namky", "cặc", "sex", "hentai"]
-
-# Khởi tạo dữ liệu từ file cục bộ
-data = {}
-try:
-    with open(FILE_PATH, 'r') as f:
-        loaded = json.load(f)
-        data = {
-            k: {
-                'last_daily': datetime.fromisoformat(v['last_daily']) if v['last_daily'] else None,
-            } for k, v in loaded.items()
-        }
-except FileNotFoundError:
-    print(f"❌ Không tìm thấy {FILE_PATH}, tạo file mới")
-    with open(FILE_PATH, 'w') as f:
-        json.dump(data, f, indent=2)
-except Exception as e:
-    print(f"❌ Lỗi khi đọc {FILE_PATH}: {e}")
-
-def save_data():
-    try:
-        with open(FILE_PATH, 'w') as f:
-            content = {
-                k: {
-                    'last_daily': v['last_daily'].isoformat() if v['last_daily'] else None,
-                } for k, v in data.items()
-            }
-        json.dump(content, f, indent=2)
-        print(f"✅ Đã lưu dữ liệu vào {FILE_PATH}")
-    except Exception as e:
-        print(f"❌ Lỗi khi lưu {FILE_PATH}: {e}")
-
-# Intents
+# Cấu hình bot Discord
 intents = discord.Intents.default()
-intents.members = True
-intents.presences = True
 intents.message_content = True
+bot = commands.Bot(command_prefix='!', intents=intents)
 
-bot = commands.Bot(command_prefix="/", intents=intents)
+# Lấy biến môi trường
+DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
+DISCORD_CHANNEL_ID = int(os.getenv('DISCORD_CHANNEL_ID'))  # Chuyển thành int vì ID là số
 
-# -------------------------
-# Mute + Xóa tin nhắn + Log
-# -------------------------
-async def mute_and_log(message, reason="vi phạm", mute_time=900):
+# Cấu hình Chrome với stealth
+def setup_driver():
+    options = Options()
+    options.add_argument("--headless")
+    options.add_argument("--no-sandbox")  # Cần cho Render
+    options.add_argument("--disable-dev-shm-usage")  # Cần cho Render
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option('useAutomationExtension', False)
+    options.add_argument(f"--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{random.randint(120, 130)}.0.0.0 Safari/537.36")
+    driver = uc.Chrome(options=options, version_main=random.randint(120, 130))
+    driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+    return driver
+
+driver = setup_driver()
+
+# Hàm tạo progress bar
+def create_progress_bar(percentage):
+    filled = int(percentage / 10)
+    return f"[{'█' * filled}{' ' * (10 - filled)} {percentage}%]"
+
+# Hàm kiểm tra link Krnl
+def is_krnl_link(url):
+    return "krnl" in url.lower()
+
+# Hàm xử lý Cloudflare
+def handle_cloudflare():
     try:
-        mute_role = message.guild.get_role(MUTE_ROLE_ID)
-        if not mute_role:
-            print("❌ Không tìm thấy role mute!")
-            return
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.XPATH, "//div[contains(@class, 'cf-browser-verification') or contains(text(), 'Checking your browser')]"))
+        )
+        step_time = datetime.now()
+        WebDriverWait(driver, 30).until(
+            lambda d: "success" in d.page_source.lower() or 
+                      d.execute_script("return document.readyState") == "complete" and 
+                      "cf_clearance" in [cookie['name'] for cookie in d.get_cookies()]
+        )
+        time.sleep(5)
+        return True, (datetime.now() - step_time).total_seconds()
+    except:
+        return False, 0
 
-        # Xóa tin nhắn vi phạm
-        async for msg in message.channel.history(limit=50):
-            if msg.author == message.author and (datetime.now(timezone.utc) - msg.created_at).seconds <= TIME_WINDOW:
-                try:
-                    await msg.delete()
-                    print(f"✅ Đã xóa tin nhắn của {message.author.name}")
-                except Exception as e:
-                    print(f"❌ Lỗi khi xóa tin nhắn: {e}")
-
-        # Mute thành viên
-        await message.author.add_roles(mute_role)
-        print(f"✅ Đã mute {message.author.name} trong {mute_time // 60} phút")
-
-        # Gửi log
-        log_channel = bot.get_channel(LOG_CHANNEL_ID)
-        if log_channel:
-            embed = discord.Embed(
-                title="🚨 Phát hiện vi phạm",
-                description=f"**Người vi phạm:** {message.author.mention}\n**Lý do:** {reason}\n**Thời gian mute:** {mute_time // 60} phút",
-                color=discord.Color.red()
+# Hàm xử lý một Linkvertise
+def handle_single_linkvertise(linkvertise_count):
+    try:
+        # Bước 1: Bấm "Agree" nếu có
+        try:
+            agree_button = WebDriverWait(driver, 5).until(
+                EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Agree') or contains(text(), 'Accept')]"))
             )
-            embed.add_field(name="Nội dung", value=f"||{message.content or '*Không có nội dung*'}||", inline=False)
-            embed.add_field(name="Kênh", value=message.channel.mention, inline=True)
-            embed.add_field(name="Lưu ý", value="Cân nhắc khi xem", inline=False)
-            embed.timestamp = datetime.now(timezone.utc)
-            await log_channel.send(embed=embed)
-            print(f"✅ Đã gửi log vi phạm cho {message.author.name}")
+            agree_button.click()
+            time.sleep(2)
+        except:
+            pass
 
-        # Bỏ mute sau thời gian quy định
-        await asyncio.sleep(mute_time)
-        await message.author.remove_roles(mute_role)
-        print(f"✅ Đã bỏ mute {message.author.name}")
+        # Bước 2: Bấm "Get Link"
+        get_link_button = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Get Link')]"))
+        )
+        get_link_button.click()
+        time.sleep(2)
 
+        # Bước 3: Bấm "I'm Interested"
+        interested_button = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Interested')]"))
+        )
+        interested_button.click()
+        time.sleep(2)
+
+        # Bước 4: Bấm "Click Here" hoặc "Search Now"
+        click_button = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Click Here') or contains(text(), 'Search Now')]"))
+        )
+        click_button.click()
+        time.sleep(2)
+
+        # Bước 5: Đợi 10 giây
+        time.sleep(10)
+
+        # Bước 6: Back về Linkvertise
+        driver.back()
+        time.sleep(2)
+
+        # Bước 7: Bấm "I Have Already Completed This Step"
+        completed_button = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'I Have Already Completed This Step')]"))
+        )
+        completed_button.click()
+        time.sleep(2)
+
+        # Bước 8: Đợi 11 giây
+        time.sleep(11)
+
+        # Bước 9: Bấm "Get Link" lần nữa
+        get_link_button = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Get Link')]"))
+        )
+        get_link_button.click()
+        time.sleep(2)
+
+        # Bước 10: Bấm "Open"
+        open_button = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Open')]"))
+        )
+        open_button.click()
+        time.sleep(2)
+
+        return True, None
     except Exception as e:
-        print(f"❌ Lỗi mute_and_log: {e}")
+        return False, f"Lỗi Linkvertise {linkvertise_count}: {str(e)}"
 
-# -------------------------
-# On Message (Filter + Anti-Spam)
-# -------------------------
-user_messages = {}
+# Hàm xử lý link và lấy key
+async def process_link(url, channel):
+    if not is_krnl_link(url):
+        await channel.send("🚫 Link không phải Krnl, bỏ qua!")
+        return
 
+    start_time = datetime.now()
+    await channel.send(f"⏳ Bắt đầu xử lý link: {url}\n{create_progress_bar(10)}")
+
+    driver.get(url)
+    await channel.send(f"🌐 Đã truy cập link ({(datetime.now() - start_time).total_seconds():.2f}s)\n{create_progress_bar(20)}")
+
+    linkvertise_count = 0
+    max_linkvertise = 4
+    max_cloudflare_retries = 3
+
+    while linkvertise_count < max_linkvertise:
+        try:
+            # Xử lý Cloudflare
+            step_time = datetime.now()
+            cf_retries = 0
+            while cf_retries < max_cloudflare_retries:
+                cf_success, cf_time = handle_cloudflare()
+                if cf_success:
+                    await channel.send(f"✅ Cloudflare success ({cf_time:.2f}s)\n{create_progress_bar(30)}")
+                    break
+                else:
+                    cf_retries += 1
+                    await channel.send(f"❌ Cloudflare thất bại, retry {cf_retries}/{max_cloudflare_retries}... ({cf_time:.2f}s)\n{create_progress_bar(20)}")
+                    driver.refresh()
+                    time.sleep(5)
+            if cf_retries >= max_cloudflare_retries:
+                await channel.send("❌ Cloudflare thất bại sau 3 lần thử. Cần can thiệp thủ công!")
+                return
+
+            # Bấm "Next Checkpoint" sau Cloudflare success
+            next_button = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Next Checkpoint')]"))
+            )
+            next_button.click()
+            await channel.send(f"✅ Đã bấm 'Next Checkpoint' ({(datetime.now() - step_time).total_seconds():.2f}s)\n{create_progress_bar(40)}")
+
+            # Kiểm tra lỗi captcha fail
+            if "captcha fail" in driver.page_source.lower():
+                await channel.send(f"❌ Lỗi: Captcha fail, quay lại... ({(datetime.now() - step_time).total_seconds():.2f}s)\n{create_progress_bar(30)}")
+                driver.back()
+                time.sleep(2)
+                continue
+
+            # Xử lý Linkvertise
+            if "linkvertise" in driver.current_url:
+                linkvertise_count += 1
+                step_time = datetime.now()
+                success, error_msg = handle_single_linkvertise(linkvertise_count)
+                if success:
+                    await channel.send(f"🔗 Hoàn thành Linkvertise {linkvertise_count}/{max_linkvertise} ({(datetime.now() - step_time).total_seconds():.2f}s)\n{create_progress_bar(50 + (linkvertise_count * 10))}")
+                else:
+                    await channel.send(f"❌ {error_msg}. Thử lại... ({(datetime.now() - step_time).total_seconds():.2f}s)\n{create_progress_bar(40)}")
+                    driver.back()
+                    time.sleep(2)
+                    continue
+
+            # Kiểm tra lỗi "Linkvertise not done"
+            if "linkvertise not done" in driver.page_source.lower():
+                await channel.send(f"❌ Lỗi: Linkvertise chưa hoàn thành, thử lại... ({(datetime.now() - step_time).total_seconds():.2f}s)\n{create_progress_bar(40)}")
+                driver.back()
+                time.sleep(2)
+                continue
+
+            # Tìm key nếu không còn "Next Checkpoint"
+            if not driver.find_elements(By.XPATH, "//button[contains(text(), 'Next Checkpoint')]"):
+                step_time = datetime.now()
+                try:
+                    key_element = WebDriverWait(driver, 10).until(
+                        EC.presence_of_element_located((By.XPATH, "//div[contains(text(), 'Your key is')]"))
+                    )
+                    key = key_element.text
+                    await channel.send(f"🎉 Lấy được key: **{key}** ({(datetime.now() - step_time).total_seconds():.2f}s)\n{create_progress_bar(100)}\nTổng thời gian: {(datetime.now() - start_time).total_seconds():.2f}s (Hoàn thành {linkvertise_count} Linkvertise)")
+                    break
+                except:
+                    await channel.send(f"❌ Không tìm thấy key, thử lại toàn bộ... ({(datetime.now() - step_time).total_seconds():.2f}s)\n{create_progress_bar(50)}")
+                    break
+
+        except Exception as e:
+            await channel.send(f"❌ Lỗi hệ thống: {str(e)} ({(datetime.now() - step_time).total_seconds():.2f}s)\n{create_progress_bar(30)}")
+            driver.back()
+            time.sleep(2)
+
+    else:
+        await channel.send("❌ Đã thử tối đa 4 Linkvertise nhưng không lấy được key. Cần can thiệp thủ công!")
+
+# Sự kiện Discord: Chờ người dùng gửi link
 @bot.event
 async def on_message(message):
-    if message.author.bot:
-        return
-
-    content_lower = message.content.lower()
-
-    # Kiểm tra từ cấm
-    has_bad_word = any(word.lower() in content_lower for word in BAD_WORDS)
-    if has_bad_word:
-        await mute_and_log(message, "sử dụng từ ngữ cấm", MUTE_TIME)
-        return
-
-    # Kiểm tra spam
-    now = datetime.now(timezone.utc)
-    uid = message.author.id
-    if uid not in user_messages:
-        user_messages[uid] = []
-    user_messages[uid].append(now)
-    user_messages[uid] = [t for t in user_messages[uid] if now - t < timedelta(seconds=TIME_WINDOW)]
-
-    if len(user_messages[uid]) > SPAM_LIMIT:
-        await mute_and_log(message, "spam tin nhắn", MUTE_TIME)
-        user_messages[uid] = []
-        return
-
+    if message.channel.id == DISCORD_CHANNEL_ID and message.author != bot.user:
+        url = message.content.strip()
+        if url.startswith("http"):
+            await process_link(url, message.channel)
     await bot.process_commands(message)
 
-# -------------------------
-# On Ready
-# -------------------------
-@bot.event
-async def on_ready():
-    print(f"✅ Bot đã đăng nhập: {bot.user}")
-
-# -------------------------
-# Run Bot
-# -------------------------
-keep_alive()
-
-if not DISCORD_TOKEN:
-    print("❌ Chưa đặt DISCORD_TOKEN")
-else:
-    bot.run(DISCORD_TOKEN)
+# Khởi động bot
+bot.run(DISCORD_BOT_TOKEN)
