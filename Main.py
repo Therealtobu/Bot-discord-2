@@ -8,7 +8,7 @@ from selenium.webdriver.chrome.options import Options
 from datetime import datetime
 import time
 import random
-import os  # Thêm để lấy biến môi trường
+import os
 
 # Cấu hình bot Discord
 intents = discord.Intents.default()
@@ -17,23 +17,31 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 
 # Lấy biến môi trường
 DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
-DISCORD_CHANNEL_ID = int(os.getenv('DISCORD_CHANNEL_ID'))  # Chuyển thành int vì ID là số
+DISCORD_CHANNEL_ID = int(os.getenv('DISCORD_CHANNEL_ID'))
 
 # Cấu hình Chrome với stealth
 def setup_driver():
     options = Options()
     options.add_argument("--headless")
-    options.add_argument("--no-sandbox")  # Cần cho Render
-    options.add_argument("--disable-dev-shm-usage")  # Cần cho Render
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option('useAutomationExtension', False)
     options.add_argument(f"--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{random.randint(120, 130)}.0.0.0 Safari/537.36")
-    driver = uc.Chrome(options=options, version_main=random.randint(120, 130))
-    driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-    return driver
+    # Chỉ định Chrome binary trên Render
+    options.binary_location = "/usr/bin/google-chrome"  # Đường dẫn Chrome trên container
+    try:
+        driver = uc.Chrome(options=options, version_main=random.randint(120, 130))
+        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        return driver
+    except Exception as e:
+        print(f"Lỗi khởi tạo driver: {str(e)}")
+        return None
 
 driver = setup_driver()
+if not driver:
+    raise Exception("Không thể khởi tạo Chrome driver")
 
 # Hàm tạo progress bar
 def create_progress_bar(percentage):
