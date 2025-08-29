@@ -29,19 +29,24 @@ def setup_driver():
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option('useAutomationExtension', False)
     options.add_argument(f"--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{random.randint(120, 130)}.0.0.0 Safari/537.36")
-    # Chỉ định Chrome binary trên Render
-    options.binary_location = "/usr/bin/google-chrome"  # Đường dẫn Chrome trên container
-    try:
-        driver = uc.Chrome(options=options, version_main=random.randint(120, 130))
-        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        return driver
-    except Exception as e:
-        print(f"Lỗi khởi tạo driver: {str(e)}")
-        return None
+    options.binary_location = "/usr/bin/google-chrome"  # Đường dẫn Chrome trên Render
+    for attempt in range(3):  # Thử 3 lần
+        try:
+            driver = uc.Chrome(
+                options=options,
+                browser_executable_path="/usr/bin/google-chrome",
+                version_main=random.randint(120, 130)
+            )
+            driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            return driver
+        except Exception as e:
+            print(f"Lỗi khởi tạo driver (thử {attempt + 1}/3): {str(e)}")
+            time.sleep(2)
+    return None
 
 driver = setup_driver()
 if not driver:
-    raise Exception("Không thể khởi tạo Chrome driver")
+    raise Exception("Không thể khởi tạo Chrome driver sau 3 lần thử")
 
 # Hàm tạo progress bar
 def create_progress_bar(percentage):
