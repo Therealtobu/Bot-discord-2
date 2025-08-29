@@ -34,7 +34,9 @@ RUN rm google-chrome-stable_current_amd64.deb
 
 # Kiểm tra Chrome binary
 RUN google-chrome --version || { echo "Chrome installation failed"; exit 1; }
-RUN which google-chrome || { echo "Chrome binary not found"; exit 1; }
+RUN which google-chrome || { echo "Chrome binary not found at /usr/bin/google-chrome"; exit 1; }
+RUN echo "Chrome binary found at: $(which google-chrome)"
+RUN google-chrome --version > /app/chrome_version.txt
 
 # Cài đặt Python dependencies
 WORKDIR /app
