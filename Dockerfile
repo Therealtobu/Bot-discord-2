@@ -1,7 +1,8 @@
-# Base image: Python 3.12 slim (ổn định, còn audioop)
 FROM python:3.12-slim
 
-# Cài dependency cho Chrome
+WORKDIR /app
+
+# Cài dependency cho Chrome (vì bạn dùng undetected-chromedriver)
 RUN apt-get update && apt-get install -y \
     wget unzip curl gnupg \
     libglib2.0-0 libnss3 libgconf-2-4 libfontconfig1 \
@@ -11,22 +12,17 @@ RUN apt-get update && apt-get install -y \
     fonts-liberation xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Cài đặt Google Chrome
+# Cài đặt Chrome (cần cho undetected-chromedriver)
 RUN wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
     && apt-get install -y ./google-chrome-stable_current_amd64.deb \
     && rm google-chrome-stable_current_amd64.deb
 
-# Thư mục làm việc
-WORKDIR /app
-
-# Cài dependencies Python (bỏ voice)
+# Cài Python dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt \
-    && pip uninstall -y discord.py[voice] || true \
-    && pip install --no-cache-dir "discord.py==2.3.2"
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy code vào container
+# Copy toàn bộ code
 COPY . .
 
-# Chạy bot
+# Run bot
 CMD ["python", "Main.py"]
