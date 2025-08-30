@@ -5,8 +5,9 @@ FROM python:3.13-slim
 RUN python --version > /app/python_version.txt
 RUN echo "Python version: $(python --version)"
 
-# Cài đặt phụ thuộc cho Chrome
+# Cài đặt phụ thuộc cho Chrome và biên dịch (build-essential cho aiohttp)
 RUN apt-get update && apt-get install -y \
+    build-essential \
     wget \
     unzip \
     curl \
