@@ -180,7 +180,7 @@ async def process_link(url, channel):
                 await channel.send("❌ Cloudflare thất bại sau 3 lần thử. Cần can thiệp thủ công!")
                 return
 
-            # Bấm "Next Checkpoint" sau Cloudflare success
+            # Bấm "Next Checkpoint"
             next_button = WebDriverWait(driver, 10).until(
                 EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Next Checkpoint')]"))
             )
