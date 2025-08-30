@@ -1,4 +1,5 @@
 py-cord==2.4.1
 undetected-chromedriver==3.5.5
 setuptools==75.1.0
+aiohttp==3.10.5
 flask
