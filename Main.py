@@ -2,32 +2,53 @@ import discord
 from discord.ext import commands
 import json
 from datetime import datetime
-import os  # Đã có, dùng để đọc env var
+import os
+import threading
+from flask import Flask  # Import Flask cho keep-alive
+import time
 
-# Đọc BOT_TOKEN từ environment variable (an toàn hơn hardcode)
+# Đọc BOT_TOKEN từ environment variable
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 if not BOT_TOKEN:
     print("❌ Lỗi: Không tìm thấy BOT_TOKEN trong environment variables!")
     print("Hướng dẫn set: export BOT_TOKEN='your_token_here' (Linux/Mac) hoặc set BOT_TOKEN=your_token_here (Windows)")
-    exit(1)  # Exit nếu thiếu token
+    exit(1)
 
-# ID kênh nhận webhook (có thể cũng làm env var nếu muốn, ví dụ: WEBHOOK_CHANNEL_ID = int(os.getenv('WEBHOOK_CHANNEL_ID', '0')))
-WEBHOOK_CHANNEL_ID = 1405080664390500402  # Thay bằng ID kênh log của bạn
+# ID kênh nhận webhook (thay bằng ID thật)
+WEBHOOK_CHANNEL_ID = 1405080664390500402  # Right-click kênh > Copy Channel ID
 
-# Setup bot (giữ nguyên)
+# Setup bot
 intents = discord.Intents.default()
 intents.message_content = True
-intents.components = True  # Để handle button
+intents.components = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# ... (Phần còn lại của code giữ nguyên: on_ready, on_message, on_interaction, track command, bot.run(BOT_TOKEN))
-
-# Global dict lưu data real-time (key: username Roblox)
+# Global dict lưu data
 user_data = {}
+
+# PHẦN KEEP-ALIVE: Flask server
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "AppleHubTracker Bot is Alive! 🚀"
+
+@app.route('/ping')
+def ping():
+    return {"status": "alive", "timestamp": time.time()}, 200
+
+def run_flask():
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port, debug=False)
+
+# Chạy Flask trong thread riêng
+flask_thread = threading.Thread(target=run_flask, daemon=True)
+flask_thread.start()
 
 @bot.event
 async def on_ready():
     print(f'{bot.user} (AppleHubTracker) đã online! Sẵn sàng track logs từ Roblox.')
+    print(f'Keep-Alive server running on port {os.environ.get("PORT", 8080)}')
     try:
         synced = await bot.tree.sync()
         print(f'Synced {len(synced)} slash commands.')
@@ -36,11 +57,9 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
-    # Parse embed từ webhook Apple Hub (chỉ trong kênh cụ thể)
     if message.channel.id == WEBHOOK_CHANNEL_ID and message.embeds:
         embed = message.embeds[0]
-        if "Apple Hub" in embed.title:  # Xác nhận từ script Roblox
-            # Extract username từ description
+        if "Apple Hub" in embed.title:
             desc = embed.description
             username = "Unknown"
             if "username" in desc:
@@ -49,7 +68,6 @@ async def on_message(message):
                 if start_idx > 0 and end_idx > start_idx:
                     username = desc[start_idx:end_idx]
             
-            # Parse fields real-time
             total_time = "00:00:00"
             wins = 0
             hops = 0
@@ -73,8 +91,6 @@ async def on_message(message):
                     'last_update': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 }
                 print(f"[TRACK] Updated {username}: Time={total_time}, Wins={wins}, Hops={hops}, FPS={fps}")
-                # Tùy chọn: Gửi confirm message vào kênh (hoặc không, để im lặng)
-                # await message.channel.send(f"✅ Updated data for {username}")
     
     await bot.process_commands(message)
 
@@ -87,7 +103,6 @@ async def on_interaction(interaction: discord.Interaction):
                 await interaction.response.send_message("❌ Chưa có data real-time từ Apple Hub!", ephemeral=True)
                 return
             
-            # Nếu multi-user, list options; nếu single, lấy đầu tiên
             if len(user_data) == 1:
                 username = list(user_data.keys())[0]
             else:
@@ -107,13 +122,8 @@ async def on_interaction(interaction: discord.Interaction):
             else:
                 await interaction.response.send_message("❌ Không tìm thấy data!", ephemeral=True)
             return
-    
-    # Xử lý slash commands (nếu có)
-    if interaction.type == discord.InteractionType.application_command:
-        # Bot sẽ tự handle qua tree
-        pass
 
-# Slash command để xem track thủ công
+# Slash command /track
 @bot.tree.command(name="track", description="Xem chi tiết real-time của user Apple Hub")
 async def track(interaction: discord.Interaction, username: str = None):
     if not user_data:
