@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 import os
 import threading
-from flask import Flask  # Import Flask cho keep-alive
+from flask import Flask
 import time
 
 # Đọc BOT_TOKEN từ environment variable
@@ -15,12 +15,12 @@ if not BOT_TOKEN:
     exit(1)
 
 # ID kênh nhận webhook (thay bằng ID thật)
-WEBHOOK_CHANNEL_ID = 1405080664390500402  # Right-click kênh > Copy Channel ID
+WEBHOOK_CHANNEL_ID = 1234567890123456789  # Right-click kênh > Copy Channel ID
 
-# Setup bot
+# Setup bot (FIX: Xóa intents.components, thêm guilds)
 intents = discord.Intents.default()
 intents.message_content = True
-intents.components = True
+intents.guilds = True  # Giúp handle interactions (slash commands, buttons)
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 # Global dict lưu data
