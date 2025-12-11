@@ -1,3 +1,3 @@
 discord.py==2.3.2
-aiohttp==3.9.1  # Để hỗ trợ HTTP nếu cần fetch thêm data từ Roblox API
-python-dateutil==2.8.2  # Xử lý timestamp real-time cho log
+flask==2.3.3
+audioop-lts  # Backport cho audioop trên Python 3.13+
