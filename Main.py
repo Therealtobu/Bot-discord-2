@@ -6,27 +6,27 @@ import os
 import threading
 from flask import Flask
 import time
+import requests  # Để post Pastebin
 
-# Đọc BOT_TOKEN từ environment variable
+# Đọc BOT_TOKEN từ env
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 if not BOT_TOKEN:
-    print("❌ Lỗi: Không tìm thấy BOT_TOKEN trong environment variables!")
-    print("Hướng dẫn set: export BOT_TOKEN='your_token_here' (Linux/Mac) hoặc set BOT_TOKEN=your_token_here (Windows)")
+    print("❌ Lỗi: Không tìm thấy BOT_TOKEN!")
     exit(1)
 
-# ID kênh nhận webhook (thay bằng ID thật)
-WEBHOOK_CHANNEL_ID = 1234567890123456789  # Right-click kênh > Copy Channel ID
+# ID kênh webhook
+WEBHOOK_CHANNEL_ID = 1405080664390500402  # Thay ID kênh log
 
-# Setup bot (FIX: Xóa intents.components, thêm guilds)
+# Setup bot
 intents = discord.Intents.default()
 intents.message_content = True
-intents.guilds = True  # Giúp handle interactions (slash commands, buttons)
+intents.guilds = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# Global dict lưu data
+# Dict lưu data user
 user_data = {}
 
-# PHẦN KEEP-ALIVE: Flask server
+# Keep-alive Flask
 app = Flask(__name__)
 
 @app.route('/')
@@ -41,13 +41,12 @@ def run_flask():
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port, debug=False)
 
-# Chạy Flask trong thread riêng
 flask_thread = threading.Thread(target=run_flask, daemon=True)
 flask_thread.start()
 
 @bot.event
 async def on_ready():
-    print(f'{bot.user} (AppleHubTracker) đã online! Sẵn sàng track logs từ Roblox.')
+    print(f'{bot.user} (AppleHubTracker) đã online!')
     print(f'Keep-Alive server running on port {os.environ.get("PORT", 8080)}')
     try:
         synced = await bot.tree.sync()
@@ -123,7 +122,6 @@ async def on_interaction(interaction: discord.Interaction):
                 await interaction.response.send_message("❌ Không tìm thấy data!", ephemeral=True)
             return
 
-# Slash command /track
 @bot.tree.command(name="track", description="Xem chi tiết real-time của user Apple Hub")
 async def track(interaction: discord.Interaction, username: str = None):
     if not user_data:
@@ -147,6 +145,29 @@ async def track(interaction: discord.Interaction, username: str = None):
     else:
         await interaction.response.send_message(f"❌ Không tìm thấy data cho `{username}`!", ephemeral=True)
 
-# Chạy bot
+# NEW: Command broadcast thông báo đến all hoặc specific user (post lên Pastebin)
+PASTEBIN_API_KEY = 'eh9H6JqSr16XPV101t2PV4otRasHLLO3'  # Thay API key Pastebin (đăng ký tại pastebin.com/api)
+
+@bot.tree.command(name="broadcast", description="Gửi thông báo cho user script trên Discord")
+async def broadcast(interaction: discord.Interaction, message: str, username: str = "all"):
+    await interaction.response.defer(ephemeral=True)
+    
+    paste_title = f"AppleHub_Notification_{username}"
+    paste_content = f'{{ "message": "{message}", "target": "{username}" }}'
+    
+    response = requests.post("https://pastebin.com/api/api_post.php", data={
+        'api_dev_key': PASTEBIN_API_KEY,
+        'api_option': 'paste',
+        'api_paste_code': paste_content,
+        'api_paste_name': paste_title,
+        'api_paste_expire_date': '1D'  # Expire 1 ngày
+    })
+    
+    if "pastebin.com" in response.text:
+        paste_url = response.text
+        await interaction.followup.send(f"✅ Thông báo gửi thành công đến {username}! Paste URL: {paste_url}", ephemeral=True)
+    else:
+        await interaction.followup.send("❌ Lỗi gửi thông báo! (Check API key)", ephemeral=True)
+
 if __name__ == "__main__":
     bot.run(BOT_TOKEN)
